@@ -15,28 +15,28 @@ library(ggplot2)
 
 # Prevented Attempts Analysis
 ########################
-#Connect to SalesForce Authentication if necessary
-##this like goes directly 
+# Connect to SalesForce Authentication if necessary
+## this like goes directly 
 sf_auth(login_url = "https://sss33.my.salesforce.com/")
 
 ########################
 # See this document for details on each parameter and how the values are calculated
-#https://docs.google.com/spreadsheets/d/1PW0QnOKzDnuU1TDaSX4AGA4HbJsSXJZBXPqTN8CkXKA/edit#gid=0
+# https://docs.google.com/spreadsheets/d/1PW0QnOKzDnuU1TDaSX4AGA4HbJsSXJZBXPqTN8CkXKA/edit#gid=0
 
-#Read in packages if running only PA code
+# Read in packages if running only PA code
 library(salesforcer)
 library(lubridate)
 library(summarytools)
 library(dplyr)
 library(ggplot2)
 
-#Set data parameters
-#Start date listed is the date where new HealthCloud data started being collected in the new system
+# Set data parameters
+# Start date listed is the date where new HealthCloud data started being collected in the new system
 gv_startdate="2023-10-01T05:00:00Z" #This day is included in the range
-#End date provided here is the end of the 2023 calendar year
+# End date provided here is the end of the 2023 calendar year
 gv_enddate="2024-01-01T05:00:00Z" #The range goes up to but NOT including this date
-#Start year is the first day of the calendar year being evaluated
-#This will be used in future analyses for annual calculations rather than quarterly
+# Start year is the first day of the calendar year being evaluated
+# This will be used in future analyses for annual calculations rather than quarterly
 gv_startyear="2023-01-01T05:00:00Z"
 
 
