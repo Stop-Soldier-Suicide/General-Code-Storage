@@ -1,378 +1,19 @@
 ---
-title: "VIP 2.0 Healthcloud"
+title: "Prevented Attempts"
 author: "Abby Beatty"
 date: "2024-01-03"
 output: html_document
 ---
 
 #Read in Packages for VIP and PA Analysis
-```{r read packages}
 library(salesforcer)
 library(lubridate)
 library(summarytools)
 library(dplyr)
 library(ggplot2)
 
-```
-
-########################
-# VIP 2.0
-########################
-```{ruby Set Sources}
-
-sf_auth(login_url = "https://sss33.my.salesforce.com/")
-
-
-# See https://docs.google.com/spreadsheets/d/1PW0QnOKzDnuU1TDaSX4AGA4HbJsSXJZBXPqTN8CkXKA/edit#gid=0
-
-#Base population is all cases in the system
-#VIP is based on date they became a VIP
-
-#Dataset of all non-test accounts and all cases within those accounts that currently exist (10/1/23 to now) to get set of unique people
-#Use that set to merge in caseIDs of true clients to create list of unique caseIDs
-#VIP to be per iteration of treatment (based on caseID)
-
-gv_startdate="2023-10-01T05:00:00Z" #This day is included in the range
-gv_enddate="2024-01-01T05:00:00Z" #The range goes up to but NOT including this date
-gv_startyear="2023-01-01T05:00:00Z"
-
-# SF query parameters
-gv_VIPsource1="Account"
-gv_VIPfields1="Id, Name, CreatedDate, Test_Account__c"
-
-gv_VIPsource2="Form_Data__c"
-gv_VIPfields2="Id,Account__c,Care_Plan__c, CreatedDate, CRISIS_Crisis_Reasons__c, CRISIS_Suicide_Timing__c, Aborted_Suicide_Prep__c, Interrupted_Prep__c, Recent_Suicide_Attempt__c, BSCS_Self_Worth__c, BSCS_Problem_Help__c, BSCS_Coping_Struggle__c, BSCS_Enduring_Pain__c, BSCS_Self_Redeeming__c, BSCS_Suicide_Thoughts__c, CRP_Firearms_Access__c, CRP_Safe_lockbox_Usage__c, CRP_Firearms_Loaded__c,  IIA_Outcome__c, IIA_Alternate_Methods__c,  IIA_Similar_Trigers_or_Methods__c, COQ_B_Talked_About_Suicide__c, IIA_Ability_to_Maintain_Safety__c, COQ_Fleeting_Thoughts__c" 
-###Name=="B-COQ: Baseline Core Outcomes Questionnaire"
-
-gv_VIPsource3="CaseHistory"
-gv_VIPfields3="CaseId, Field, NewValue, CreatedDate" 
-
-gv_VIPsource4="Case"
-gv_VIPfields4= "Id, AccountID, I_am__c, Thoughts_Intention_of_acting_on_them__c, Details_of_How_Intend_to_Carry_Out__c, Done_Started_Prepared_last_3_months__c, Any_thoughts_of_killing_yourself__c,Wished_you_were_dead_Past_Month__c,Thoughts_of_killing_yourself_past_month__c, Done_Started_Prepared_to_end_your_life__c, Status_Change_Reason__c, Status, CreatedDate"
-
-gv_VIPsource5="Case_Note__c"
-gv_VIPfields5="Id, Overall_Risk_Level__c, Risk_Level_Change_Reason__c, CreatedDate" 
-```
-
-```{r Queries}
-VIPaccount_query=sprintf(paste("SELECT ",gv_VIPfields1," FROM ",gv_VIPsource1," WHERE CreatedDate>=",gv_startdate," and CreatedDate<",gv_enddate))
-VIPaccount=sf_query(VIPaccount_query)
-
-VIPform_query=sprintf(paste("SELECT ",gv_VIPfields2," FROM ",gv_VIPsource2," WHERE CreatedDate>=",gv_startdate," and CreatedDate<",gv_enddate))
-VIPform=sf_query(VIPform_query)
-
-VIPcaseh_query=sprintf(paste("SELECT ",gv_VIPfields3," FROM ",gv_VIPsource3," WHERE CreatedDate>=",gv_startdate," and CreatedDate<",gv_enddate))
-VIPcaseh <- sf_query(VIPcaseh_query)
-
-VIPhistory_query=sprintf(paste("SELECT ",gv_VIPfields3," FROM ",gv_VIPsource3," WHERE CreatedDate>=",gv_startdate," and CreatedDate<",gv_enddate))
-VIPhistory=sf_query(VIPhistory_query)
-
-VIPcase_query=sprintf(paste("SELECT ",gv_VIPfields4," FROM ",gv_VIPsource4," WHERE CreatedDate>=",gv_startdate," and CreatedDate<",gv_enddate))
-VIPcase=sf_query(VIPcase_query)
-
-VIPcasenote_query=sprintf(paste("SELECT ",gv_VIPfields5," FROM ",gv_VIPsource5," WHERE CreatedDate>=",gv_startdate," and CreatedDate<",gv_enddate))
-VIPcasenote <- sf_query(VIPcasenote_query)
-```
-
-```{r Merge & Filter}
-
-#Remove all rows where the case does not have an associated account or requests were made by a third party
-#Rename ID to be CaseId
-VIPcase=VIPcase%>%
-  rename(CaseId=Id, CaseCreatedDate=CreatedDate)%>%
-  filter(is.na(AccountId)==FALSE, I_am__c=="I am a veteran/service member seeking help",(is.na(Status_Change_Reason__c)|(Status_Change_Reason__c!="Third Party - Did Not Convert Client" & Status_Change_Reason__c!="Third Party - Converted Client"))) #Remove cases without an account, and 3P requests
-  #Rename ID to be AccountID
-  #This is important for merging the case and account data, as in the case data, it is called "AccountID"
-
-VIPaccount=VIPaccount%>%
-  rename(AccountId=Id,AccountCreatedDate=CreatedDate)
-
-
-#Merge the Case and Account Data together
-VIPcas_acc=merge(VIPcase,VIPaccount,by="AccountId") %>%
-filter(is.na(AccountId)==FALSE, (is.na(I_am__c)|I_am__c!="I am requesting help for a veteran/service member"),((is.na(Status_Change_Reason__c)==TRUE & Status=="Active_In_Care")|(Status_Change_Reason__c!="Third Party - Did Not Convert Client" & Status_Change_Reason__c!="Third Party - Converted Client" & Status_Change_Reason__c!="Duplicate Case for Active Client" & Status_Change_Reason__c!="Test Case" & Status_Change_Reason__c!="Ineligible - Not a Service Member/Veteran" & Status_Change_Reason__c!="Ineligible - Underage" & Status_Change_Reason__c!="Declined Services At Intake" & Status_Change_Reason__c!="Declined Services At Scheduling" & Status_Change_Reason__c!="Referred to External Provider" & Status_Change_Reason__c!="Unable to Contact - Intake Not Completed, Client Nonconnection" & Status_Change_Reason__c!="Caring Contacts - Ongoing" & Status_Change_Reason__c!="Caring Contacts - Completed" & Status_Change_Reason__c!="Caring Contacts - Client Returned to Care" & Status_Change_Reason__c!="Caring Contacts - Client Opted Out")))%>%
-  mutate(testname=grepl("TEST",toupper(Name),fixed = TRUE)*1)%>%
-  mutate(rrbcname=grepl("RRBC",toupper(Name),fixed = TRUE)*1)%>%
-  filter(testname==0,rrbcname==0,Test_Account__c==FALSE,(is.na(Status_Change_Reason__c)|(Status_Change_Reason__c!="Duplicate Case for Active Client" & Status_Change_Reason__c!="Test Case" & Status_Change_Reason__c!="Ineligible - Not a Service Member/Veteran" & Status_Change_Reason__c!="Ineligible - Underage"))) 
-
-#Important exclusion criteria!
-#Remove cases without an account, and 3P requests
-#inner join, only keep cases that have an account associated with it.
-
-#Rename Account__c to be AccountID
-VIPform=VIPform%>%
-  rename(AccountId=Account__c,
-         CaseId= Care_Plan__c)
-
-
-```
-
-```{r}
-#Merge used for all VIP criteria using the Form Data Object
-VIP_form_df=merge(VIPcas_acc, VIPform, by="CaseId",all.x=TRUE) #keep all the original cases even if they do not have form data
-
-unique(VIPcas_acc$CaseId)
-unique(VIPcas_acc$AccountId)
-
-backup=VIP_form_df
-
-#Merge used for all VIP criteria using the CaseHistory Data Object
-VIP_caseh_df=merge(VIPcas_acc,VIPcaseh,by="CaseId",all.x=TRUE) #keep all the original cases even if they do not have form data
-
-##VIP01: Form Data; Done
-VIP1_form_df = VIP_form_df %>% 
-  mutate(VIP01 = case_when(grepl("Lethal Means in Hand", CRISIS_Crisis_Reasons__c, fixed=T) | grepl("Active Attempt", CRISIS_Crisis_Reasons__c, fixed=T) | grepl("Suicidal Gestures", CRISIS_Crisis_Reasons__c, fixed=T)  ~ 1, TRUE ~ NA_real_)) %>%
-    filter(VIP01==1) %>%
-  select(CaseId, CreatedDate, VIP01) %>%
-   group_by(CaseId) %>%
-  filter(CreatedDate == min(CreatedDate)) %>%
-    rename(VIP01.Date=CreatedDate)
-
-##VIP02: Form Data; Done
-VIP2_form_df = VIP_form_df %>% 
-  mutate(VIP02 = case_when(CRISIS_Suicide_Timing__c=="within the next day" | CRISIS_Suicide_Timing__c=="within 7 days" | CRISIS_Suicide_Timing__c=="within 30 days"  ~ 1, TRUE ~ NA_real_))%>%
-    filter(VIP02==1) %>%
-  select(CaseId, CreatedDate, VIP02) %>%
-   group_by(CaseId) %>%
-  filter(CreatedDate == min(CreatedDate)) %>%
-    rename(VIP02.Date=CreatedDate)
-
-##VIP03: Form Data; Done
-VIP3_form_df = VIP_form_df %>% 
-  mutate(VIP03 = case_when(Aborted_Suicide_Prep__c=="Yes"  ~ 1, TRUE ~ NA_real_)) %>%
-    filter(VIP03==1) %>%
-  select(CaseId, CreatedDate, VIP03) %>%
-   group_by(CaseId) %>%
-  filter(CreatedDate == min(CreatedDate)) %>%
-    rename(VIP03.Date=CreatedDate)
-
-##VIP04: Form Data; Done
-VIP4_form_df = VIP_form_df %>% 
-  mutate(VIP04 = case_when(Interrupted_Prep__c=="Yes"  ~ 1, TRUE ~ NA_real_)) %>%
-    filter(VIP04==1) %>%
-  select(CaseId, CreatedDate, VIP04) %>%
-   group_by(CaseId) %>%
-  filter(CreatedDate == min(CreatedDate)) %>%
-    rename(VIP04.Date=CreatedDate)
-
-##VIP05: Form Data; Done
-VIP5_form_df = VIP_form_df %>% 
-  mutate(VIP05 = case_when(Recent_Suicide_Attempt__c=="Yes"  ~ 1, TRUE ~ NA_real_)) %>%
-    filter(VIP05==1) %>%
-  select(CaseId, CreatedDate, VIP05) %>%
-   group_by(CaseId) %>%
-  filter(CreatedDate == min(CreatedDate)) %>%
-    rename(VIP05.Date=CreatedDate)
-
-##VIP06: Case, Case History; Confirmed
-VIP6_caseh_df = VIP_caseh_df %>% 
-  mutate(VIP06 = case_when(Status_Change_Reason__c=="Died by Suicide"  ~ 1, TRUE ~ NA_real_)) %>%
-filter(VIP06==1) %>%
-  select(CaseId, CreatedDate, VIP06) %>%
-   group_by(CaseId) %>%
-  filter(CreatedDate == min(CreatedDate)) %>%
-    rename(VIP06.Date=CreatedDate)
-
-##VIP07: Case; Confirmed
-VIP7_case_df = VIPcase %>% 
-  mutate(VIP07 = case_when(Thoughts_Intention_of_acting_on_them__c=="Yes" | Details_of_How_Intend_to_Carry_Out__c=="Yes" | Done_Started_Prepared_last_3_months__c=="Yes"  ~ 1, TRUE ~ NA_real_)) %>%
-  filter(VIP07==1) %>%
-  select(CaseId, CaseCreatedDate, VIP07) %>%
-   group_by(CaseId) %>%
-  filter(CaseCreatedDate == min(CaseCreatedDate)) %>%
-    rename(VIP07.Date=CaseCreatedDate)
-
-##VIP08: Form Data; Done
-VIP8_form_df = VIP_form_df %>% 
-  rowwise() %>% 
-  mutate(VIP08 = sum(c_across(BSCS_Coping_Struggle__c:BSCS_Suicide_Thoughts__c), na.rm = T))  %>% 
-  mutate(VIP08 = case_when(VIP08 > 12 ~ 1, TRUE ~ NA_real_)) %>%
-    filter(VIP08==1) %>%
-  select(CaseId, CreatedDate, VIP08) %>%
-   group_by(CaseId) %>%
-  filter(CreatedDate == min(CreatedDate)) %>%
-    rename(VIP08.Date=CreatedDate)
-
-##VIP09: Case History; Confirmed
-VIP9_caseh_df = VIP_caseh_df %>% 
-  mutate(VIP09 = case_when(Field=="Most Recent Overall Risk Level" & NewValue=="HRC"  ~ 1, TRUE ~ NA_real_)) %>%
-  filter(VIP09==1) %>%
-  select(CaseId, CreatedDate, VIP09) %>%
-   group_by(CaseId) %>%
-  filter(CreatedDate == min(CreatedDate)) %>%
-    rename(VIP09.Date=CreatedDate)
-
-##VIP10: Case/Form Data; Confirmed
-VIP10_form_df = VIP_form_df %>% 
-  mutate(VIP10 = case_when(Any_thoughts_of_killing_yourself__c=="Yes" | Wished_you_were_dead_Past_Month__c=="Yes" | Thoughts_of_killing_yourself_past_month__c=="Yes" | Done_Started_Prepared_to_end_your_life__c=="Yes"  ~ 1, TRUE ~ NA_real_)) %>%
-    mutate(VIP10 = case_when(Name=="B-COQ: Baseline Core Outcomes Questionnaire" & COQ_Fleeting_Thoughts__c=="Yes"  ~ 1, TRUE ~ NA_real_)) %>%
-    mutate(VIP10 = case_when((IIA_Ability_to_Maintain_Safety__c=="Intent to Act Not Found, Completed CRP" |   IIA_Ability_to_Maintain_Safety__c=="Intent to Act Unclear, Completed Contingency Plan" | IIA_Ability_to_Maintain_Safety__c=="Intent to Act Is Present, Contacted Emergency Services") & COQ_B_Talked_About_Suicide__c=="No" ~ 1, TRUE ~ NA_real_ )) %>%
-  filter(VIP10==1) %>%
-  select(CaseId, CaseCreatedDate, VIP10) %>%
-   group_by(CaseId) %>%
-  filter(CaseCreatedDate == min(CaseCreatedDate)) %>%
-    rename(VIP10.Date=CaseCreatedDate)
-
-##VIP11: Form Data; Confirmed
-VIP11_form_df = VIP_form_df %>% 
-  mutate(VIP11 = case_when(CRP_Firearms_Access__c=="Yes" & CRP_Safe_lockbox_Usage__c=="No" & CRP_Firearms_Loaded__c=="Yes" ~ 1, TRUE ~ NA_real_)) %>% 
-  #mutate(VIP11 = case_when(grepl("firearm", IIA_Outcome__c,ignore.case = TRUE) ~ "1",
-                            #grepl("firearm", IIA_Alternate_Methods__c, ignore.case = TRUE) ~"1",
-                            #grepl("firearm", IIA_Similar_Trigers_or_Methods__c, ignore.case = TRUE) ~"1",
-                            #grepl("gun", IIA_Outcome__c,ignore.case = TRUE) ~ "1",
-                            #grepl("gun", IIA_Alternate_Methods__c, ignore.case = TRUE) ~"1",
-                            #grepl("gun", IIA_Similar_Trigers_or_Methods__c, ignore.case = TRUE) ~"1")) %>%
-          filter(VIP11==1) %>%
-          select(CaseId, CreatedDate, VIP11) %>%
-          group_by(CaseId) %>%
-          filter(CreatedDate == min(CreatedDate)) %>%
-          rename(VIP11.Date=CreatedDate)
-
-#Merge all VIP measures together
-VIPsimp=VIPcas_acc %>%
-select(AccountId, AccountCreatedDate, CaseId, CaseCreatedDate)
-
-VIP_merged= left_join(VIPsimp, VIP1_form_df, by='CaseId') %>%
-                left_join(., VIP2_form_df, by='CaseId') %>%
-                left_join(., VIP3_form_df, by='CaseId') %>%
-                left_join(., VIP4_form_df, by='CaseId') %>%
-                left_join(., VIP5_form_df, by='CaseId') %>%
-                left_join(., VIP6_caseh_df, by='CaseId') %>%
-                left_join(., VIP7_case_df, by='CaseId') %>%
-                left_join(., VIP8_form_df, by='CaseId') %>%
-                left_join(., VIP9_caseh_df, by='CaseId') %>%
-                left_join(., VIP10_form_df, by='CaseId') %>%
-                left_join(., VIP11_form_df, by='CaseId') %>%
-                rowwise() %>% 
-                mutate(VIP_client=case_when(VIP01==1 |VIP02==1|VIP03==1 |VIP04==1 |VIP05==1 |VIP06==1 |VIP07==1 |VIP08==1 |VIP09==1 |VIP10==1 |VIP11==1 ~ 1)) %>%
-              #find earliest and latest date within each row
-                 mutate(EarliestVIPdate = pmin(VIP01.Date, VIP02.Date, VIP03.Date, VIP04.Date, VIP05.Date, VIP06.Date, VIP07.Date, VIP08.Date, VIP09.Date, VIP10.Date, VIP11.Date, na.rm = TRUE), 
-                          LatestVIPdate = pmax(VIP01.Date, VIP02.Date, VIP03.Date, VIP04.Date, VIP05.Date, VIP06.Date, VIP07.Date, VIP08.Date, VIP09.Date, VIP10.Date, VIP11.Date, na.rm = TRUE)) %>%
-                select(-contains(".Date"))
-                
-##VIP12
-
-############################################################################
-##Numbers for Quarterly USAA Reporting##
-
-###Identify the unique number of Accounts/Cases in any of the reports above
-VIP_only= VIP_merged %>% 
-    filter(VIP_client==1) 
-
-#Add in all 0's for NAs
-
-#of unique accounts with VIP designation
-nrow(distinct(VIP_only,AccountId))
-#of unique cases with VIP designation
-nrow(VIP_only)
-
-#Frequency table by VIPFlag (Which flags are most common)
-    #ctable for cross-tabulation
-dfSummary(VIP_only)
-
-
-library(lubridate)
-VIP_only$month.early <- format(as.Date(VIP_only$EarliestVIPdate, format="%Y/%m/%d"),"%m")
-VIP_only$month.late <- format(as.Date(VIP_only$LatestVIPdate, format="%Y/%m/%d"),"%m")
-
-
-VIP_only %>% group_by(month.early) %>% summarise(count = length(VIP_client[!is.na(VIP_client)]))
-VIP_only %>% group_by(month.late) %>% summarise(count = length(VIP_client[!is.na(VIP_client)]))
-
-VIP_only %>%
-group_by(AccountId, month.early) %>% summarise(count = length(VIP_client[!is.na(VIP_client)]))
-
-#########################################
-##Dashboard Build##
-
-###Show number of unique clients/Accounts by month (using VIPDate) and overall for a selected time period for each of the categories above
-  ##Using EarliestVIPDate per account 
-  
-###Also show the total number of unique clients/Accounts who meet any of the criteria above over the timeframe specified and show the number by month of the first time they were flagged as a VIP
-
-###Create demographic charts for all the accounts who are flagged as a VIP in the selected timeframe. Fields on the Account record would be: Age, Most Recent Overall Risk Level, Gender, Race, Ethnicity, Marital Status, Branch of Service, Service Status, Homeless, Employment Status, Domestic Violence, State (these are for establishing marketing profiles to those who are VIPs)
-
-###At the bottom include a list of the actual clients who met any of the criteria for VIP, and maybe which VIP criteria were met, that would allow managers to click on accounts and explore the clients records in greater detail.
-
-```
-
-#Testing VIP Filters
-```{r}
-test=read.csv("test_filters.csv")
-
-##VIP01: Form Data
-test = test %>% 
-  mutate(VIP01 = case_when(CRISIS_Crisis_Reasons__c=="Lethal Means in Hand" | CRISIS_Crisis_Reasons__c=="Active Attempt" | CRISIS_Crisis_Reasons__c=="Suicidal Gestures"  ~ 1, TRUE ~ NA_real_))
-
-##VIP02: Form Data
-test = test %>% 
-  mutate(VIP02 = case_when(CRISIS_Suicide_Timing__c=="within the next day" | CRISIS_Suicide_Timing__c=="within 7 days" | CRISIS_Suicide_Timing__c=="within 30 days"  ~ 1, TRUE ~ NA_real_))
-
-##VIP03: Form Data
-test = test %>% 
-  mutate(VIP03 = case_when(Aborted_Suicide_Prep__c=="Yes"  ~ 1, TRUE ~ NA_real_))
-
-##VIP04: Form Data
-test = test %>% 
-  mutate(VIP04 = case_when(Interrupted_Prep__c=="Yes"  ~ 1, TRUE ~ NA_real_))
-
-##VIP05: Form Data
-test = test %>% 
-  mutate(VIP05 = case_when(Recent_Suicide_Attempt__c=="Yes"  ~ 1, TRUE ~ NA_real_))
-
-##VIP06: Case, Case History
-test = test %>% 
-  mutate(VIP06 = case_when(Status_Change_Reason__c=="Died by Suicide"  ~ 1, TRUE ~ NA_real_))
-
-##VIP07: Case
-test = test %>% 
-  mutate(VIP07 = case_when(Thoughts_Intention_of_acting_on_them__c=="Yes" | Details_of_How_Intend_to_Carry_Out__c=="Yes" | Done_Started_Prepared_last_3_months__c=="Yes"  ~ 1, TRUE ~ NA_real_))
-
-##VIP08: Form Data
-test = test %>% 
-  rowwise() %>% 
-  mutate(VIP011 = sum(c_across(BSCS_Coping_Struggle__c:BSCS_Suicide_Thoughts__c), na.rm = T))  %>% 
-  mutate(VIP011 = case_when(VIP011 > 12 ~ 1, TRUE ~ NA_real_))
-
-##VIP09: Case History
-test = test %>% 
-  mutate(VIP09 = case_when(Field=="Most Recent Overall Risk Level" & NewValue=="HRC"  ~ 1, TRUE ~ NA_real_))
-
-#VIP10: Form/Case Data
-test = test %>% 
- mutate(VIP10 = case_when(Any_thoughts_of_killing_yourself__c=="Yes" | Wished_you_were_dead_Past_Month__c=="Yes" | Thoughts_of_killing_yourself_past_month__c=="Yes" | Done_Started_Prepared_to_end_your_life__c=="Yes"  ~ 1, TRUE ~ NA_real_)) %>%
-  mutate(VIP10 = case_when(Name=="B-COQ: Baseline Core Outcomes Questionnaire" & COQ_Fleeting_Thoughts__c=="Yes"  ~ 1, TRUE ~ NA_real_)) %>%
-   mutate(VIP10 = case_when((IIA_Ability_to_Maintain_Safety__c=="Intent to Act Not Found, Completed CRP" | IIA_Ability_to_Maintain_Safety__c=="Intent to Act Unclear, Completed Contingency Plan" | IIA_Ability_to_Maintain_Safety__c=="Intent to Act Is Present, Contacted Emergency Services") & COQ_B_Talked_About_Suicide__c=="No" ~ 1, TRUE ~ NA_real_ )) 
-
-##VIP11: Form Data
-test = test %>% 
-  mutate(VIP011 = case_when(CRP_Firearms_Access__c=="Yes" & CRP_Safe_lockbox_Usage__c=="No" & CRP_Firearms_Loaded__c=="Yes" ~ 1, TRUE ~ NA_real_)) %>% 
-  mutate(VIP011 = case_when(grepl("firearm", IIA_Outcome__c,ignore.case = TRUE) ~ "1",
-                            grepl("firearm", IIA_Alternate_Methods__c, ignore.case = TRUE) ~"1",
-                            grepl("firearm", IIA_Similar_Trigers_or_Methods__c, ignore.case = TRUE) ~"1",
-                            grepl("gun", IIA_Outcome__c,ignore.case = TRUE) ~ "1",
-                            grepl("gun", IIA_Alternate_Methods__c, ignore.case = TRUE) ~"1",
-                            grepl("gun", IIA_Similar_Trigers_or_Methods__c, ignore.case = TRUE) ~"1"))
-
-
-```
-
-#Testing Date Filters
-```{r}
-test.date=read.csv("test_date.csv")
-
-##VIP01: Form Data; Confirmed
-test.date = test.date %>% 
-  mutate(VIP01 = case_when(CRISIS_Crisis_Reasons__c=="Lethal Means in Hand" | CRISIS_Crisis_Reasons__c=="Active Attempt" | CRISIS_Crisis_Reasons__c=="Suicidal Gestures"  ~ 1, TRUE ~ NA_real_)) %>%
-    filter(VIP01==1) %>%
-  select(AccountID, CaseID, CreatedDate, VIP01) %>%
-   group_by(CaseID) %>%
-  filter(CreatedDate == min(CreatedDate)) %>%
-    rename(VIP01.Date=CreatedDate)
-```
 
 #Prevented Attempts Analysis
-```{r PAs}
 ########################
 #Connect to SalesForce Authentication if necessary
 ##this like goes directly 
@@ -397,10 +38,9 @@ gv_enddate="2024-01-01T05:00:00Z" #The range goes up to but NOT including this d
 #Start year is the first day of the calendar year being evaluated
 #This will be used in future analyses for annual calculations rather than quarterly
 gv_startyear="2023-01-01T05:00:00Z"
-```
+
 
 #Start with Case Note Query
-```{r}
 #Look within the Case Note Object
 gv_APsource5="Case_Note__c"
 #Bring in the following fields specific to the case note object
@@ -434,10 +74,9 @@ APcasen.unique=APcasen %>%
 #this value should match the unique number of CaseIds in APcasen
 
 unique(APcasen$CaseId) #360
-```
+
 
 #Read in and format Case Data
-```{r}
 #Pull HC data from the case object
 gv_APsource4="Case"
 #pull the following fields from the case object
@@ -454,10 +93,9 @@ APcase=sf_query(APcase_query)
 APcase=APcase%>%
   rename(CaseId=Id, CaseCreatedDate=CreatedDate)%>%
   filter(is.na(AccountId)==FALSE, (is.na(I_am__c)|I_am__c!="I am requesting help for a veteran/service member"), (is.na(Status_Change_Reason__c)|(Status_Change_Reason__c!="Third Party - Did Not Convert Client" & Status_Change_Reason__c!="Third Party - Converted Client"))) 
-```
+
 
 #Read in and format Account Data
-```{r}
 #Pull HC data from the Account object
 gv_APsource1="Account"
 #pull the following fields from the account object
@@ -486,10 +124,7 @@ filter(is.na(AccountId)==FALSE, (is.na(I_am__c)|I_am__c!="I am requesting help f
   filter(testname==0,rrbcname==0,Test_Account__c==FALSE)  #This now includes 282, if we also add Status_Change_Reason__c!="Referred to External Provider" to the filter then we get 240 clients which is exactly the same I get with my code.
 
 
-```
-
 #Read in and format Form Data
-```{r}
 #Pull HC data from the form object
 gv_APsource2="Form_Data__c"
 #pull the following fields from the form object
@@ -512,10 +147,9 @@ APform=APform%>%
 #Merge keeps all form data, allowing for more than one observation per CaseId
 AP_form_df=merge(APcas_acc, APform, by="CaseId",all.x=TRUE) 
 
-```
+
 
 #Individual AP Calculations
-```{r}
 ######################################
 #PA01.: Form Data, Case 
 #Client in crisis has stabilized (as recorded in the Crisis Form), or client is still alive and receiving care from us after 30 days or more from the initial crisis (i.e., the service date of the Crisis Form record)
@@ -735,10 +369,9 @@ filter(AP012==1) %>%
    group_by(CaseId) %>%
     filter(CreatedDate == min(CreatedDate)) %>%
     rename(AP012.Date=CreatedDate)
-```
+
 
 #Merged/Final Calculations
-```{r}
 #################################
 
 #All cases should have a PA value ranging from 0-1. Create a sum of all PA values over the given time frame.
@@ -784,11 +417,10 @@ AP_full= left_join(AP_simp, AP1_form_df, by='CaseId') %>%
 #Track global dates and totals up to that point
 #note this is impacted by completion rate of forms
 colSums(Filter(is.numeric, AP_full), na.rm=T) #Jan 1st 2024 value was 8.15
-```
+
 
 #Sections below here are still under development. 
 #Potential avenues for visualization/interpretation
-```{r}
 
 #By date (Note: Dates aren't particularly helpful)
 AP_full$month <- format(as.Date(AP_full$AP_date, format="%Y/%m/%d"),"%m")
@@ -797,29 +429,21 @@ AP_full %>% group_by(month) %>% summarise(total = sum(AP_max[!is.na(AP_max)]))
 #By date of when they became a client?: 
 
 
-```
-
 
 # Analysis by Account
-```{r}
 ### IMPORTANT: The APcas_acc can have some accounts with multiple caseids (especially as this file gets larger). It is unique at the caseid level but may have duplicate accountids. To get the number of unique people you need to do the following code to select only one case per accountid:
 APcas_acc_people=APcas_acc%>%
   group_by(AccountId)%>%
   filter(CaseCreatedDate==min(CaseCreatedDate)) #I am selecting the earliest case for each account, but in the future we may want to change the logic to capture first the longest open case and then the case that was last closed. You can apply this additional logic by ordering it so that the record you want is at the top within each group and then filtering by row_number()==1.
-```
+
 
 #Non-Response Issues/Weighting
-```{r}
 #calculate non-response rate for the columns we use in the code
 #which ones are effected by non-response
 #what SOPs are playing a role
 #what is the magnitude of the issue
 
-
-```
-
 #Read in case history
-```{r}
 #We will likely not use this in the future
 #The history field does not contain all of the useful information for this calculation. When we try to calculate PA using this object, we grep for terms that can be used in both positive and negative ways, which leads to assignment of PA values that are invalid. This issue is eliminated by using the CaseNote object, which is what we have opted for below. This code is saved here, but can be disregarded at this time. 
 
@@ -864,4 +488,4 @@ APcas_acc_people=APcas_acc%>%
 
 #unique(AP9_form_df$CaseId)
 
-```
+
