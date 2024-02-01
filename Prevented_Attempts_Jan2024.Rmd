@@ -32,9 +32,9 @@ library(ggplot2)
 
 # Set data parameters
 # Start date listed is the date where new HealthCloud data started being collected in the new system
-gv_startdate="2023-10-01T05:00:00Z" #This day is included in the range
+gv_startdate="2023-10-01T05:00:00Z" # This day is included in the range
 # End date provided here is the end of the 2023 calendar year
-gv_enddate="2024-01-01T05:00:00Z" #The range goes up to but NOT including this date
+gv_enddate="2024-01-01T05:00:00Z" # The range goes up to but NOT including this date
 # Start year is the first day of the calendar year being evaluated
 # This will be used in future analyses for annual calculations rather than quarterly
 gv_startyear="2023-01-01T05:00:00Z"
@@ -73,7 +73,7 @@ APcasen.unique=APcasen %>%
   filter(row_number()==1)
 # this value should match the unique number of CaseIds in APcasen
 
-unique(APcasen$CaseId) #360
+unique(APcasen$CaseId) # 360
 
 
 # Read in and format Case Data
@@ -121,7 +121,7 @@ filter(is.na(AccountId)==FALSE, (is.na(I_am__c)|I_am__c!="I am requesting help f
   # Create a flag in variable called "rrbcname" for any record that includes the term "RRBC", which is an assumed test case 
   mutate(rrbcname=grepl("RRBC",toupper(Name),fixed = TRUE)*1)%>%
   # Remove all test cases and test accounts
-  filter(testname==0,rrbcname==0,Test_Account__c==FALSE)  #This now includes 282, if we also add Status_Change_Reason__c!="Referred to External Provider" to the filter then we get 240 clients which is exactly the same I get with my code.
+  filter(testname==0,rrbcname==0,Test_Account__c==FALSE)  # This now includes 282, if we also add Status_Change_Reason__c!="Referred to External Provider" to the filter then we get 240 clients which is exactly the same I get with my code.
 
 
 # Read in and format Form Data
@@ -257,12 +257,12 @@ AP7_form_df = AP_form_df %>%
  mutate(AP07 = case_when((Thoughts_Intention_of_acting_on_them__c=='Yes' | Details_of_How_Intend_to_Carry_Out__c=="Yes" | Done_Started_Prepared_last_3_months__c=="Yes") & 
    unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30>=12 ~ .16, # at least 12 months
    (Thoughts_Intention_of_acting_on_them__c=="Yes" | Details_of_How_Intend_to_Carry_Out__c=="Yes" | Done_Started_Prepared_last_3_months__c=="Yes") & 
-   unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30<12 ~ (0.08/12*(unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30)+.08), #less than 12 months
+   unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30<12 ~ (0.08/12*(unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30)+.08), # less than 12 months
 # These second two are  MRCs: Each value assigned requires "yes" for responses on wishing you were dead, thoughts of suicide in past month, and preparation. The value assigned varies by how long they have been in our care between the completion of the C-SSRS of concern and the Last connection date. 
    (Wished_you_were_dead_Past_Month__c=="Yes" | Thoughts_of_killing_yourself_past_month__c=="Yes" | Done_Started_Prepared_to_end_your_life__c=="Yes") & 
-   unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30>=12 ~ .04, #at least 12 months
+   unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30>=12 ~ .04, # at least 12 months
    (Wished_you_were_dead_Past_Month__c=="Yes" | Thoughts_of_killing_yourself_past_month__c=="Yes" | Done_Started_Prepared_to_end_your_life__c=="Yes") & 
-   unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30<12 ~ (0.03/12*(unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30)+.01)))  %>% #less than 12 months
+   unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30<12 ~ (0.03/12*(unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30)+.01)))  %>% # less than 12 months
     filter(AP07>0) %>%
     group_by(CaseId) %>%
     filter(AP07==max(AP07)) %>%
