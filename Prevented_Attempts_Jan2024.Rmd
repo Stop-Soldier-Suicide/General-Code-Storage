@@ -18,7 +18,7 @@ library(ggplot2)
 ########################
 # VIP 2.0
 ########################
-```{r Set Sources}
+```{ruby Set Sources}
 
 sf_auth(login_url = "https://sss33.my.salesforce.com/")
 
