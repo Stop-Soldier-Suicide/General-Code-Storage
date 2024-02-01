@@ -5,7 +5,7 @@ date: "2024-01-03"
 output: html_document
 ---
 
-#Read in Packages for VIP and PA Analysis
+# Read in Packages for VIP and PA Analysis
 library(salesforcer)
 library(lubridate)
 library(summarytools)
@@ -13,7 +13,7 @@ library(dplyr)
 library(ggplot2)
 
 
-#Prevented Attempts Analysis
+# Prevented Attempts Analysis
 ########################
 #Connect to SalesForce Authentication if necessary
 ##this like goes directly 
