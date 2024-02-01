@@ -40,139 +40,139 @@ gv_enddate="2024-01-01T05:00:00Z" #The range goes up to but NOT including this d
 gv_startyear="2023-01-01T05:00:00Z"
 
 
-#Start with Case Note Query
-#Look within the Case Note Object
+# Start with Case Note Query
+# Look within the Case Note Object
 gv_APsource5="Case_Note__c"
-#Bring in the following fields specific to the case note object
+# Bring in the following fields specific to the case note object
 gv_APfields5="Case__c, Id, Overall_Risk_Level__c, Risk_Level_Change_Reason__c, CreatedDate, Interaction_With_Whom__c, Connection_Outcome__c"
-#Query in data, restricting the query to session notes, general notes, and RRBC notes between the given dates
+# Query in data, restricting the query to session notes, general notes, and RRBC notes between the given dates
 APcasenote_query=sprintf(paste("SELECT ",gv_APfields5," FROM ",gv_APsource5,"  WHERE (Case_Note_Type__c='Session' or Case_Note_Type__c='General' or Case_Note_Type__c='RRBC') and Interaction_Date_Time__c>=" ,gv_startdate," and Interaction_Date_Time__c<",gv_enddate))
-#Pull data from HC using the above parameters
+# Pull data from HC using the above parameters
 APcasenote <- sf_query(APcasenote_query)
 
-#Reformatting the Case note file. This "APcasen" file will include all relevant case notes, and will be used for additional filtering and the AP calculation regarding case notes. 
+# Reformatting the Case note file. This "APcasen" file will include all relevant case notes, and will be used for additional filtering and the AP calculation regarding case notes. 
 APcasen=APcasenote%>%
-  #Group by the CaseID, which is named "Case__c" in the Case note object until renamed below
+  # Group by the CaseID, which is named "Case__c" in the Case note object until renamed below
   group_by(Case__c)%>%
-  #Create a new column indicating if the note is based on an interaction with 3rd party
+  # Create a new column indicating if the note is based on an interaction with 3rd party
   mutate(thirdpartyclient=case_when(Interaction_With_Whom__c=="3rd Party Client"~1,TRUE~0)) %>%
-  #only keep notes resulting from direct contact with a client and has an associated case record. This also excludes all third party clients based on the custom variable created above
+  # only keep notes resulting from direct contact with a client and has an associated case record. This also excludes all third party clients based on the custom variable created above
   filter(Connection_Outcome__c=="Connected by Phone, Video, SMS Conversation, or Email Conversation" & is.na(Case__c)==FALSE & thirdpartyclient==0)%>% 
-  #rename the CreatedDate column to CasenCreated Date so that it is not overwritten during merges.
-  #Rename Case__c to be CaseId to allow for proper merge
+  # rename the CreatedDate column to CasenCreated Date so that it is not overwritten during merges.
+  # Rename Case__c to be CaseId to allow for proper merge
   rename(CasenCreatedDate=CreatedDate,
          CaseId=Case__c) 
 
 ########################################################
 
-#filter here to only include one case note per case. This is used to find only relevant Cases and accounts.
+# filter here to only include one case note per case. This is used to find only relevant Cases and accounts.
 APcasen.unique=APcasen %>%
   #only keep CaseId variable in the fie
   select(CaseId) %>%
   #Only keep one row per unique case Id to get list of all unique CaseIds in the Case Note query
   filter(row_number()==1)
-#this value should match the unique number of CaseIds in APcasen
+# this value should match the unique number of CaseIds in APcasen
 
 unique(APcasen$CaseId) #360
 
 
-#Read in and format Case Data
-#Pull HC data from the case object
+# Read in and format Case Data
+# Pull HC data from the case object
 gv_APsource4="Case"
-#pull the following fields from the case object
+# pull the following fields from the case object
 gv_APfields4= "Id, AccountID, I_am__c, CreatedDate, Last_Connection_DateTime__c, Status_Change_Reason__c, Status, Wished_you_were_dead_Past_Month__c, Thoughts_of_killing_yourself_past_month__c, Done_Started_Prepared_to_end_your_life__c, Thoughts_Intention_of_acting_on_them__c, Details_of_How_Intend_to_Carry_Out__c, Done_Started_Prepared_last_3_months__c "
 
-#Query in the fields from the selected dates
-#add in filter to only bring in cases with a matching CaseId found within the Case Note criteria previously described
+# Query in the fields from the selected dates
+# add in filter to only bring in cases with a matching CaseId found within the Case Note criteria previously described
 APcase_query=sprintf(paste("SELECT ",gv_APfields4," FROM ",gv_APsource4," WHERE Id IN (",paste("'",unique(APcasen.unique$CaseId),"'",sep="",collapse=","),")"))
-#Pull data from SF
+# Pull data from SF
 APcase=sf_query(APcase_query)
 
-#Remove all rows where the case does not have an associated account or requests were made by a third party. Additional filter of "is.na(I_am__c)" is included as many of the clients who came from NPSP do not have this "I_am" variable filled in, which is why we allow for cases that have a missing value. 
-#Rename ID to be CaseId
+# Remove all rows where the case does not have an associated account or requests were made by a third party. Additional filter of "is.na(I_am__c)" is included as many of the clients who came from NPSP do not have this "I_am" variable filled in, which is why we allow for cases that have a missing value. 
+# Rename ID to be CaseId
 APcase=APcase%>%
   rename(CaseId=Id, CaseCreatedDate=CreatedDate)%>%
   filter(is.na(AccountId)==FALSE, (is.na(I_am__c)|I_am__c!="I am requesting help for a veteran/service member"), (is.na(Status_Change_Reason__c)|(Status_Change_Reason__c!="Third Party - Did Not Convert Client" & Status_Change_Reason__c!="Third Party - Converted Client"))) 
 
 
-#Read in and format Account Data
-#Pull HC data from the Account object
+# Read in and format Account Data
+# Pull HC data from the Account object
 gv_APsource1="Account"
-#pull the following fields from the account object
+# pull the following fields from the account object
 gv_APfields1="Id, Name, CreatedDate, Test_Account__c"
 
-#Query only account data from HC in which there is a unique corresponding Account ID in the merged data file matching all Case and Case Note filtering criteria
+# Query only account data from HC in which there is a unique corresponding Account ID in the merged data file matching all Case and Case Note filtering criteria
 APaccount_query=sprintf(paste("SELECT ",gv_APfields1," FROM ",gv_APsource1," WHERE Id IN (",paste("'",unique(APcase$AccountId),"'",sep="",collapse=","),")"))
-#Pull data from SF
+# Pull data from SF
 APaccount=sf_query(APaccount_query)
 
-#Rename ID to be AccountID
-#This is important for merging the case and account data, as in the case data, it is called "AccountID"
+# Rename ID to be AccountID
+# This is important for merging the case and account data, as in the case data, it is called "AccountID"
 APaccount=APaccount%>%
   rename(AccountId=Id,AccountCreatedDate=CreatedDate)
 
-#Merge the Case and Account Data together
-#NOTE: we removed the Referral to External Provider exclusion (& Status_Change_Reason__c!="Referred to External Provider")
+# Merge the Case and Account Data together
+# NOTE: we removed the Referral to External Provider exclusion (& Status_Change_Reason__c!="Referred to External Provider")
 APcas_acc=merge(APcase,APaccount,by="AccountId") %>%
-  #Remove anyone who is a third party, ineligable for services, declining service, or caring contacts
+  # Remove anyone who is a third party, ineligable for services, declining service, or caring contacts
 filter(is.na(AccountId)==FALSE, (is.na(I_am__c)|I_am__c!="I am requesting help for a veteran/service member"),((is.na(Status_Change_Reason__c)==TRUE & Status=="Active_In_Care")|(Status_Change_Reason__c!="Third Party - Did Not Convert Client" & Status_Change_Reason__c!="Third Party - Converted Client" & Status_Change_Reason__c!="Duplicate Case for Active Client" & Status_Change_Reason__c!="Test Case" & Status_Change_Reason__c!="Ineligible - Not a Service Member/Veteran" & Status_Change_Reason__c!="Ineligible - Underage" & Status_Change_Reason__c!="Declined Services At Intake" & Status_Change_Reason__c!="Declined Services At Scheduling"  & Status_Change_Reason__c!="Unable to Contact - Intake Not Completed, Client Nonconnection"  & Status_Change_Reason__c!="Caring Contacts - Ongoing" & Status_Change_Reason__c!="Caring Contacts - Completed" & Status_Change_Reason__c!="Caring Contacts - Client Returned to Care" & Status_Change_Reason__c!="Caring Contacts - Client Opted Out")))%>%
-  #Create a flag in variable called "testname" for any record that includes the term "TEST", which is an assumed test case 
+  # Create a flag in variable called "testname" for any record that includes the term "TEST", which is an assumed test case 
   mutate(testname=grepl("TEST",toupper(Name),fixed = TRUE)*1)%>%
-  #Create a flag in variable called "rrbcname" for any record that includes the term "RRBC", which is an assumed test case 
+  # Create a flag in variable called "rrbcname" for any record that includes the term "RRBC", which is an assumed test case 
   mutate(rrbcname=grepl("RRBC",toupper(Name),fixed = TRUE)*1)%>%
-  #Remove all test cases and test accounts
+  # Remove all test cases and test accounts
   filter(testname==0,rrbcname==0,Test_Account__c==FALSE)  #This now includes 282, if we also add Status_Change_Reason__c!="Referred to External Provider" to the filter then we get 240 clients which is exactly the same I get with my code.
 
 
-#Read in and format Form Data
-#Pull HC data from the form object
+# Read in and format Form Data
+# Pull HC data from the form object
 gv_APsource2="Form_Data__c"
-#pull the following fields from the form object
+# pull the following fields from the form object
 gv_APfields2="Name, Id,Account__c,Care_Plan__c, CreatedDate, CRISIS_Crisis_Reasons__c, CRISIS_Suicide_Timing__c, CRISIS_Date_Crisis_Occurred__c, Aborted_Suicide_Prep__c, Interrupted_Prep__c, Recent_Suicide_Attempt__c, SSS_Impact__c,Stopper_Details__c, COQ_F_ROGER_Prevent_Attempt__c, CRP_Firearms_Access__c, CRP_Safe_lockbox_Usage__c, CRP_Firearms_Loaded__c,IIA_Outcome__c, IIA_Alternate_Methods__c, IIA_Similar_Trigers_or_Methods__c, BSCS_Self_Worth__c, BSCS_Problem_Help__c, BSCS_Coping_Struggle__c, BSCS_Enduring_Pain__c, BSCS_Self_Redeeming__c, BSCS_Suicide_Thoughts__c " 
-#Query in the fields from the selected dates
-#Bring in only the form data between the selected dates for which there is a CaseId (equivalent to Care_Plan__c) that matches a unique CaseId in the APcas_acc file. This limits the query to only those cases that are of interest based on the previous filtering criteria at the case note, case, and account level
+# Query in the fields from the selected dates
+# Bring in only the form data between the selected dates for which there is a CaseId (equivalent to Care_Plan__c) that matches a unique CaseId in the APcas_acc file. This limits the query to only those cases that are of interest based on the previous filtering criteria at the case note, case, and account level
 APform_query=sprintf(paste("SELECT ",gv_APfields2," FROM ",gv_APsource2," WHERE CreatedDate>=",gv_startdate," and CreatedDate<",gv_enddate," and Care_Plan__c IN (",paste("'",unique(APcas_acc$CaseId),"'",sep="",collapse=","),")"))
-#Pull data from SF
+# Pull data from SF
 APform=sf_query(APform_query)
 
 APform=APform%>%
-  #Rename "Account__c" to be "AccountID"
+  # Rename "Account__c" to be "AccountID"
   rename(AccountId=Account__c,
-  #Rename "Care_Plan__c" to be "CaseId" as in the APcas_acc file to allow for merging
+  # Rename "Care_Plan__c" to be "CaseId" as in the APcas_acc file to allow for merging
          CaseId= Care_Plan__c,
-  #Rename "Name" to "FormName" as to not conflict with "Name" variable which provides clients name in the account file
+  # Rename "Name" to "FormName" as to not conflict with "Name" variable which provides clients name in the account file
          FormName=Name)
 
-#Merge used for all AP criteria using the Form Data Object
-#Merge keeps all form data, allowing for more than one observation per CaseId
+# Merge used for all AP criteria using the Form Data Object
+# Merge keeps all form data, allowing for more than one observation per CaseId
 AP_form_df=merge(APcas_acc, APform, by="CaseId",all.x=TRUE) 
 
 
 
-#Individual AP Calculations
+# Individual AP Calculations
 ######################################
-#PA01.: Form Data, Case 
-#Client in crisis has stabilized (as recorded in the Crisis Form), or client is still alive and receiving care from us after 30 days or more from the initial crisis (i.e., the service date of the Crisis Form record)
+# PA01.: Form Data, Case 
+# Client in crisis has stabilized (as recorded in the Crisis Form), or client is still alive and receiving care from us after 30 days or more from the initial crisis (i.e., the service date of the Crisis Form record)
 
 AP1_form_df = AP_form_df %>% 
-  #Flag all records in which someones Crisis reason is listed as "Lethal Means in Hand", "Suicidal Gestures" or "Active Attempt" AND there were at least 30 days between the date of crisis and the date of last contact
+  # Flag all records in which someones Crisis reason is listed as "Lethal Means in Hand", "Suicidal Gestures" or "Active Attempt" AND there were at least 30 days between the date of crisis and the date of last contact
   mutate(AP01 = case_when(grepl("Lethal Means in Hand", CRISIS_Crisis_Reasons__c, fixed=T) | grepl("Active Attempt", CRISIS_Crisis_Reasons__c, fixed=T) | grepl("Suicidal Gestures", CRISIS_Crisis_Reasons__c, fixed=T) & (date(Last_Connection_DateTime__c) >= ((CRISIS_Date_Crisis_Occurred__c) +30)) ~ 1, TRUE ~ NA_real_)) %>%
-  #only keep flagged records where criteria are met  
+  # only keep flagged records where criteria are met  
   filter(AP01==1) %>%
-  #Keep the CaseID, Created Date, and Flag columns
+  # Keep the CaseID, Created Date, and Flag columns
   select(CaseId, CreatedDate, AP01) %>%
-  #For each case ID, keep the record with the earliest created date, max of one record per CaseId
+  # For each case ID, keep the record with the earliest created date, max of one record per CaseId
    group_by(CaseId) %>%
   filter(CreatedDate == min(CreatedDate)) %>%
-  #Rename the date of earliest record to date of event that led to a value assignment in AP01
+  # Rename the date of earliest record to date of event that led to a value assignment in AP01
   rename(AP01.Date=CreatedDate)
 
 ###################################
 
-#PA02.: Form Data, Case
-#Client in crisis has stabilized (as recorded in the Crisis Form), or client is still alive and receiving care from us after 30 days or more from the initial crisis (i.e., the service date of the Crisis Form record)
+# PA02.: Form Data, Case
+# Client in crisis has stabilized (as recorded in the Crisis Form), or client is still alive and receiving care from us after 30 days or more from the initial crisis (i.e., the service date of the Crisis Form record)
 
-#See AP1 for explanatory annotations
+# See AP1 for explanatory annotations
 AP2_form_df = AP_form_df %>% 
   mutate(AP02 = case_when((CRISIS_Suicide_Timing__c=="within the next day" | CRISIS_Suicide_Timing__c=="within 7 days" | CRISIS_Suicide_Timing__c=="within 30 days") & (date(Last_Connection_DateTime__c) >= ((CRISIS_Date_Crisis_Occurred__c) +30)) ~ 1, TRUE ~ NA_real_))%>%
     filter(AP02==1) %>%
@@ -182,10 +182,10 @@ AP2_form_df = AP_form_df %>%
     rename(AP02.Date=CreatedDate)
 
 #########################################
-#PA03.: Form Data
-#Client who prepared to attempt suicide but aborted those preparations (recorded in the Suicide Attempt Survey (WC Reported) every 30 days)
+# PA03.: Form Data
+# Client who prepared to attempt suicide but aborted those preparations (recorded in the Suicide Attempt Survey (WC Reported) every 30 days)
 
-#See AP1 for explanatory annotations
+# See AP1 for explanatory annotations
 AP3_form_df = AP_form_df %>% 
   mutate(AP03 = case_when(Aborted_Suicide_Prep__c=="Yes" & (date(Last_Connection_DateTime__c) >= ((CRISIS_Date_Crisis_Occurred__c) +30)) ~ 1, TRUE ~ NA_real_)) %>%
     filter(AP03==1) %>%
@@ -195,10 +195,10 @@ AP3_form_df = AP_form_df %>%
     rename(AP03.Date=CreatedDate)
 
 #####################################
-#PA04.: Form Data 
-#Client who prepared to attempt suicide but the preparations were interrupted and stopped at least in part by SSS (recorded in the Suicide Attempt Survey (WC Reported) every 30 days)
+# PA04.: Form Data 
+# Client who prepared to attempt suicide but the preparations were interrupted and stopped at least in part by SSS (recorded in the Suicide Attempt Survey (WC Reported) every 30 days)
 
-#See AP1 for explanatory annotations
+# See AP1 for explanatory annotations
 AP4_form_df = AP_form_df %>% 
   mutate(AP04 = case_when(Interrupted_Prep__c=="Yes" & Stopper_Details__c=="SSS Staff" ~ 1, TRUE ~ NA_real_)) %>%
     filter(AP04==1) %>%
@@ -208,13 +208,13 @@ AP4_form_df = AP_form_df %>%
     rename(AP04.Date=CreatedDate)
 
 ###################################
-#PA05.: Form Data 
-#If SSS helped reduced the risk of the attempt then we will count this as a PA, but if not then the PA indicator will be recoded as 0.
-#NOTE: Following this logic, recent attempts could have occurred prior to gaining access to SSS services or during the first days of SSS care.
+# PA05.: Form Data 
+# If SSS helped reduced the risk of the attempt then we will count this as a PA, but if not then the PA indicator will be recoded as 0.
+# NOTE: Following this logic, recent attempts could have occurred prior to gaining access to SSS services or during the first days of SSS care.
 
 
-#AP5a is the indicator of a prevented attempt. This is individuals where there was an attempt, but they indicated that SSS did have an impact during crisis. 
-#See AP1 for explanatory annotations
+# AP5a is the indicator of a prevented attempt. This is individuals where there was an attempt, but they indicated that SSS did have an impact during crisis. 
+# See AP1 for explanatory annotations
 AP5a_form_df = AP_form_df %>% 
   mutate(AP05a = case_when(Recent_Suicide_Attempt__c=="Yes" & SSS_Impact__c=="Yes" ~ 1, TRUE ~ NA_real_)) %>%
     filter(AP05a==1) %>%
@@ -223,8 +223,8 @@ AP5a_form_df = AP_form_df %>%
   filter(CreatedDate == min(CreatedDate)) %>%
     rename(AP05a.Date=CreatedDate)
 
-#AP5b is NOT an indicator of a prevented attempt. This occurs when there is an attempt, and there is no report of SSS impact on the client outcome. If there is a flag in the AP5b variable, AP7,8,9, and 11 will automatically be overwritten with a value of 0. 
-#See AP1 for explanatory annotations
+# AP5b is NOT an indicator of a prevented attempt. This occurs when there is an attempt, and there is no report of SSS impact on the client outcome. If there is a flag in the AP5b variable, AP7,8,9, and 11 will automatically be overwritten with a value of 0. 
+# See AP1 for explanatory annotations
 AP5b_form_df = AP_form_df %>% 
   mutate(AP05b = case_when(Recent_Suicide_Attempt__c=="Yes" & SSS_Impact__c!="No" ~ 1, TRUE ~ NA_real_)) %>%
     filter(AP05b==1) %>%
@@ -234,31 +234,31 @@ AP5b_form_df = AP_form_df %>%
     rename(AP05b.Date=CreatedDate)
 
 ####################################
-#PA06.:Case
-#Not a PA. Their PA indicator will be re-coded as 0, even if it had previously been coded as something higher based on the other LS/SAA criteria. We will also do a root-cause analysis for the client who died by suicide while in our care, and we will discuss the results of each NDI search and their implications for our approach.
+# PA06.:Case
+# Not a PA. Their PA indicator will be re-coded as 0, even if it had previously been coded as something higher based on the other LS/SAA criteria. We will also do a root-cause analysis for the client who died by suicide while in our care, and we will discuss the results of each NDI search and their implications for our approach.
 
-#See AP1 for explanatory annotations
+# See AP1 for explanatory annotations
 AP6_case_df = APcas_acc %>% 
   mutate(AP06 = case_when(Status_Change_Reason__c=="Died by Suicide"  ~ 1, TRUE ~ NA_real_)) %>%
 filter(AP06==1) %>%
   select(CaseId, AP06) %>%
    group_by(CaseId) 
 
-#Following final merge, if there is a flag in the AP06 variable, the total/max AP value will be rewritten to a value of "0" to ensure this individual has no contribution to the total lives saved value. 
+# Following final merge, if there is a flag in the AP06 variable, the total/max AP value will be rewritten to a value of "0" to ensure this individual has no contribution to the total lives saved value. 
 
 #################################
-#PA07.: Case
-#Based on an unpublished analysis SSS has done with the VA Office of Mental Health and Suicide Prevention, we found that among veterans who fill out the C-SSRS in the emergency department, 1% of low risk, 1% of moderate risk, and 8% of high risk will attempt suicide within 30 days. (just added) In 1 year,  4% of low and moderate risk, and 16% of high risk will attempt suicide. To quantify PA we will assign everyone a baseline fraction of a PA of 0.01, 0.01, or 0.08 based on their responses to the C-SSRS screener. If a client drops out of SSS care before 30 days from the screener, or if they attempt suicide then we will re-code this fractional PA to 0. If at any point the client is flagged as an entire PA or a higher fractional PA from another approach listed in this table, then the higher value will be recorded.
+# PA07.: Case
+# Based on an unpublished analysis SSS has done with the VA Office of Mental Health and Suicide Prevention, we found that among veterans who fill out the C-SSRS in the emergency department, 1% of low risk, 1% of moderate risk, and 8% of high risk will attempt suicide within 30 days. (just added) In 1 year,  4% of low and moderate risk, and 16% of high risk will attempt suicide. To quantify PA we will assign everyone a baseline fraction of a PA of 0.01, 0.01, or 0.08 based on their responses to the C-SSRS screener. If a client drops out of SSS care before 30 days from the screener, or if they attempt suicide then we will re-code this fractional PA to 0. If at any point the client is flagged as an entire PA or a higher fractional PA from another approach listed in this table, then the higher value will be recorded.
 
-#See AP1 for explanatory annotations; deviations and new code are annotated with in line notes
+# See AP1 for explanatory annotations; deviations and new code are annotated with in line notes
 AP7_form_df = AP_form_df %>% 
-  #Date selection: Last day we know that they were with us (Last_Connection_DateTime__c).
-#These first two are HRCs: Each value assigned requires "yes" for responses on having thoughts with intent to act, details of a plan, and preparation within the last 3 months. The value assigned varies by how long they have been in our care between the completion of the C-SSRS of concern and the Last connection date. 
+  # Date selection: Last day we know that they were with us (Last_Connection_DateTime__c).
+# These first two are HRCs: Each value assigned requires "yes" for responses on having thoughts with intent to act, details of a plan, and preparation within the last 3 months. The value assigned varies by how long they have been in our care between the completion of the C-SSRS of concern and the Last connection date. 
  mutate(AP07 = case_when((Thoughts_Intention_of_acting_on_them__c=='Yes' | Details_of_How_Intend_to_Carry_Out__c=="Yes" | Done_Started_Prepared_last_3_months__c=="Yes") & 
    unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30>=12 ~ .16, # at least 12 months
    (Thoughts_Intention_of_acting_on_them__c=="Yes" | Details_of_How_Intend_to_Carry_Out__c=="Yes" | Done_Started_Prepared_last_3_months__c=="Yes") & 
    unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30<12 ~ (0.08/12*(unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30)+.08), #less than 12 months
-#These second two are  MRCs: Each value assigned requires "yes" for responses on wishing you were dead, thoughts of suicide in past month, and preparation. The value assigned varies by how long they have been in our care between the completion of the C-SSRS of concern and the Last connection date. 
+# These second two are  MRCs: Each value assigned requires "yes" for responses on wishing you were dead, thoughts of suicide in past month, and preparation. The value assigned varies by how long they have been in our care between the completion of the C-SSRS of concern and the Last connection date. 
    (Wished_you_were_dead_Past_Month__c=="Yes" | Thoughts_of_killing_yourself_past_month__c=="Yes" | Done_Started_Prepared_to_end_your_life__c=="Yes") & 
    unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30>=12 ~ .04, #at least 12 months
    (Wished_you_were_dead_Past_Month__c=="Yes" | Thoughts_of_killing_yourself_past_month__c=="Yes" | Done_Started_Prepared_to_end_your_life__c=="Yes") & 
@@ -273,17 +273,17 @@ AP7_form_df = AP_form_df %>%
 unique(AP7_form_df$CaseId)
 ###############################
 
-#PA08.: Form Data, Case (can be simplified like PA7 with formula)
-#In a study by Rudd and Bryan (2021), they found that 24% individuals who screened positive on the B-SCS attempted suicide within the next six months. This, however, was not specific to veterans but among people who had gone to the emergency department for an acute episode of suicidality (i.e., high risk clients). To quantify LS/SAA among our clients we will assign all those who screen positive on the BSCS a baseline fractional value of a LS/SAA of 0.04. For each month they are alive and continue to receive care from SSS we will add an additional 0.04 to the LS/SAA indicator. We will do this up until 6 months of care or a total value of 0.24. If the client attempts suicide, the LS/SAA indicator will be reset to 0. If at any point the client is flagged as an entire LS/SAA or a higher fractional LS/SAA from another approach listed in this table, then the higher value will be recorded.
+# PA08.: Form Data, Case (can be simplified like PA7 with formula)
+# In a study by Rudd and Bryan (2021), they found that 24% individuals who screened positive on the B-SCS attempted suicide within the next six months. This, however, was not specific to veterans but among people who had gone to the emergency department for an acute episode of suicidality (i.e., high risk clients). To quantify LS/SAA among our clients we will assign all those who screen positive on the BSCS a baseline fractional value of a LS/SAA of 0.04. For each month they are alive and continue to receive care from SSS we will add an additional 0.04 to the LS/SAA indicator. We will do this up until 6 months of care or a total value of 0.24. If the client attempts suicide, the LS/SAA indicator will be reset to 0. If at any point the client is flagged as an entire LS/SAA or a higher fractional LS/SAA from another approach listed in this table, then the higher value will be recorded.
 
-#See AP1 for explanatory annotations; deviations and new code are annotated with in line notes
+# See AP1 for explanatory annotations; deviations and new code are annotated with in line notes
 AP8_form_df = AP_form_df %>% 
-  #calculate a cumulative score on the B-SCS assessment by finding sum of items
+  # calculate a cumulative score on the B-SCS assessment by finding sum of items
  mutate(AP08 = case_when((BSCS_Self_Worth__c+BSCS_Problem_Help__c+BSCS_Coping_Struggle__c+BSCS_Enduring_Pain__c+BSCS_Self_Redeeming__c+BSCS_Suicide_Thoughts__c)>=13 & 
-  #if overall score is at least 13 and client has been with us for at least six months after the score of concern, they are assigned a PA of 0.24
+  # if overall score is at least 13 and client has been with us for at least six months after the score of concern, they are assigned a PA of 0.24
    unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30>=6  ~ .24, 
    (BSCS_Self_Worth__c+BSCS_Problem_Help__c+BSCS_Coping_Struggle__c+BSCS_Enduring_Pain__c+BSCS_Self_Redeeming__c+BSCS_Suicide_Thoughts__c)>=13 & 
-#if overall score is at least 13 and client has been with us for less than  six months after the score of concern, the PA value is determined using a regression equ. to determine value based on length of time between assessment and last connection date.
+# if overall score is at least 13 and client has been with us for less than  six months after the score of concern, the PA value is determined using a regression equ. to determine value based on length of time between assessment and last connection date.
    unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30<6  ~ (0.20/6*(unclass(date(Last_Connection_DateTime__c)-date(CreatedDate))/30)+.04))) %>%
     filter(AP08>0) %>%
     group_by(CaseId) %>%
@@ -296,24 +296,24 @@ unique(AP8_form_df$CaseId)
 
 #################################
 
-#PA09: 
-#Restrict the Case Notes file to the list of case IDs that are relevant.
-#We already read in Case Notes, but we need to restrict them to the list of caseids in our APcas_acc file
+# PA09: 
+# Restrict the Case Notes file to the list of case IDs that are relevant.
+# We already read in Case Notes, but we need to restrict them to the list of caseids in our APcas_acc file
 APcasen_clean=merge(APcas_acc[,1:2],APcasen,by="CaseId",all.x=TRUE)
   
-#See AP1 for explanatory annotations; deviations and new code are annotated with in line notes
+# See AP1 for explanatory annotations; deviations and new code are annotated with in line notes
 AP9_form_df = APcasen_clean %>% 
   group_by(CaseId) %>%
-#if client is HRC and client has been with us for at least 12 months after overall risk assignment, they are assigned a PA of 0.16
+# if client is HRC and client has been with us for at least 12 months after overall risk assignment, they are assigned a PA of 0.16
  mutate(AP09 = (case_when((Overall_Risk_Level__c=="HRC") & 
    unclass(date(Last_Connection_DateTime__c)-date(CasenCreatedDate))/30>=12 ~ .16, 
-#if client is HRC and client has been with us for less than 12 months after overall risk assignment, the PA value is determined using a regression equ. to determine value based on length of time between risk assessment and last connection date.
+# if client is HRC and client has been with us for less than 12 months after overall risk assignment, the PA value is determined using a regression equ. to determine value based on length of time between risk assessment and last connection date.
    (Overall_Risk_Level__c=="HRC") & 
    unclass(date(Last_Connection_DateTime__c)-date(CasenCreatedDate))/30<12 ~ (0.08/12*(unclass(date(Last_Connection_DateTime__c)-date(CasenCreatedDate))/30)+.08), 
-#if client is MRC and client has been with us for at least 12 months after overall risk assignment, they are assigned a PA of 0.4
+# if client is MRC and client has been with us for at least 12 months after overall risk assignment, they are assigned a PA of 0.4
    (Overall_Risk_Level__c=="MRC") & 
    unclass(date(Last_Connection_DateTime__c)-date(CasenCreatedDate))/30>=12 ~ .04, 
-#if client is MRC and client has been with us for less than 12 months after overall risk assignment, the PA value is determined using a regression equ. to determine value based on length of time between risk assessment and last connection date.
+# if client is MRC and client has been with us for less than 12 months after overall risk assignment, the PA value is determined using a regression equ. to determine value based on length of time between risk assessment and last connection date.
    (Overall_Risk_Level__c=="MRC") & 
    unclass(date(Last_Connection_DateTime__c)-date(CasenCreatedDate))/30<12 ~ (0.03/12*(unclass(date(Last_Connection_DateTime__c)-date(CasenCreatedDate))/30)+.01)))) %>%
   filter(AP09>0) %>%
@@ -325,12 +325,12 @@ AP9_form_df = APcasen_clean %>%
 
 ####################################################
 
-#PA11.: Form Data, Case
-#Based on a studies by Shenassa and colleagues (2004) and Kposowa and colleagues (2016), we estimate that suicide risk decreases by 72% if clients store their firearms locked for over a month, 77% if they store them unloaded, and 82% if they store them both locked and unloaded. If the VIP client stores his or her firearms more securely (as recorded in their updated CRP closest to 30 days or more after their initial CRP) then we will assign them a fractional PA of 0.72, 0.77, or 0.82 based on the improved storage approach that is recorded.
+# PA11.: Form Data, Case
+# Based on a studies by Shenassa and colleagues (2004) and Kposowa and colleagues (2016), we estimate that suicide risk decreases by 72% if clients store their firearms locked for over a month, 77% if they store them unloaded, and 82% if they store them both locked and unloaded. If the VIP client stores his or her firearms more securely (as recorded in their updated CRP closest to 30 days or more after their initial CRP) then we will assign them a fractional PA of 0.72, 0.77, or 0.82 based on the improved storage approach that is recorded.
 
 
-#In order to complete the AP11 calculation, we first need the VIP flags for VIP11 criteria.
-#See AP1 for explanatory annotations; deviations and new code are annotated with in line notes
+# In order to complete the AP11 calculation, we first need the VIP flags for VIP11 criteria.
+# See AP1 for explanatory annotations; deviations and new code are annotated with in line notes
 AP11_form_df = AP_form_df %>% 
   filter (FormName=="Crisis Response Plan (CRP)") %>%
   group_by(CaseId) %>%
@@ -339,18 +339,18 @@ AP11_form_df = AP_form_df %>%
          VIP11.Date = max(case_when(VIP11==1 ~ CreatedDate)),
          #Save last created date for each record as the latest created date
          LastCreatedDate = max(CreatedDate)) %>%
-  #Remove any field where VIP11.Date is "NA"
+  # Remove any field where VIP11.Date is "NA"
   filter(is.na(VIP11.Date)!=TRUE) %>%
-  #Only keep one form record per CaseId by keeping only the one where Created Date is the Last Created Date. This will keep only one observation per CaseId. 
+  # Only keep one form record per CaseId by keeping only the one where Created Date is the Last Created Date. This will keep only one observation per CaseId. 
   filter(CreatedDate==LastCreatedDate) 
 
-#To calculate AP11 using the VIP11 criteria
+# To calculate AP11 using the VIP11 criteria
 AP11_form_df = AP11_form_df %>% 
-  #If someone met the VIP11 criteria and were in SSS care for more than 30 days following the date of VIP11 assignment, and have an unloaded firearm in a lockbox, they will be assigned an AP value of 0.82
+  # If someone met the VIP11 criteria and were in SSS care for more than 30 days following the date of VIP11 assignment, and have an unloaded firearm in a lockbox, they will be assigned an AP value of 0.82
  mutate(AP011 = case_when(VIP11==1 & ((date(CreatedDate)-date(VIP11.Date))>=30) & CRP_Safe_lockbox_Usage__c=="Yes" & CRP_Firearms_Loaded__c=="No" ~ 0.82, 
-  #If someone met the VIP11 criteria and were in SSS care for more than 30 days following the date of VIP11 assignment, and have an unloaded firearm (no indication of a lockbox), they will be assigned an AP value of 0.77
+  # If someone met the VIP11 criteria and were in SSS care for more than 30 days following the date of VIP11 assignment, and have an unloaded firearm (no indication of a lockbox), they will be assigned an AP value of 0.77
                           VIP11==1 & ((date(CreatedDate)-date(VIP11.Date))>=30) & CRP_Firearms_Loaded__c=="No" ~ 0.77, 
-    #If someone met the VIP11 criteria and were in SSS care for more than 30 days following the date of VIP11 assignment, and use a lockbox (no indication of unloaded firearm), they will be assigned an AP value of 0.72
+    # If someone met the VIP11 criteria and were in SSS care for more than 30 days following the date of VIP11 assignment, and use a lockbox (no indication of unloaded firearm), they will be assigned an AP value of 0.72
                           VIP11==1 & ((date(CreatedDate)-date(VIP11.Date))>=30) & CRP_Safe_lockbox_Usage__c=="Yes" ~ 0.72)) %>%
  mutate(AP11.Date = max(case_when(AP011==1 ~ CreatedDate))) %>%
     select(CaseId, AP11.Date, AP011) %>%
@@ -358,10 +358,10 @@ AP11_form_df = AP11_form_df %>%
 
 #################################
 
-#PA12.: Form Data
-#Client who says at any time that SSS helped prevent them from attempting suicide (recorded every 30 days in the Core Outcomes Questionnaire (Self-Report) Prolocity Version)
+# PA12.: Form Data
+# Client who says at any time that SSS helped prevent them from attempting suicide (recorded every 30 days in the Core Outcomes Questionnaire (Self-Report) Prolocity Version)
 
-#See AP1 for explanatory annotations
+# See AP1 for explanatory annotations
 AP12_form_df = AP_form_df %>% 
   mutate(AP012 = case_when(COQ_F_ROGER_Prevent_Attempt__c=="Yes"  ~ 1, TRUE ~ NA_real_)) %>%
 filter(AP012==1) %>%
@@ -371,17 +371,17 @@ filter(AP012==1) %>%
     rename(AP012.Date=CreatedDate)
 
 
-#Merged/Final Calculations
+# Merged/Final Calculations
 #################################
 
-#All cases should have a PA value ranging from 0-1. Create a sum of all PA values over the given time frame.
+# All cases should have a PA value ranging from 0-1. Create a sum of all PA values over the given time frame.
 ### AP variable for each (0,1, or in range); keep the highest of Ap1-12 value; keep the associated date of inc. corr. to the highest kept AP value; Convert flag variable as well to use for filter
 
 AP_simp=APcas_acc %>%
-#Filter file containing only the variables of interest 
+# Filter file containing only the variables of interest 
 select(AccountId, AccountCreatedDate, CaseId, CaseCreatedDate)
 
-#Merge all VIP measures together
+# Merge all VIP measures together
 AP_full= left_join(AP_simp, AP1_form_df, by='CaseId') %>%
                 left_join(., AP2_form_df, by='CaseId') %>%
                 left_join(., AP3_form_df, by='CaseId') %>%
@@ -394,9 +394,9 @@ AP_full= left_join(AP_simp, AP1_form_df, by='CaseId') %>%
                 left_join(., AP9_form_df, by='CaseId') %>%
                 left_join(., AP11_form_df, by='CaseId') %>%
                 left_join(., AP12_form_df, by='CaseId') %>%
-#Select the identifier variables and all AP flag columns with the associated dates  
+# Select the identifier variables and all AP flag columns with the associated dates  
     select(AccountId, AccountCreatedDate, CaseId, CaseCreatedDate, AP01, AP01.Date, AP02, AP02.Date, AP03, AP03.Date, AP04, AP04.Date, AP05a, AP05a.Date, AP05b, AP05b.Date, AP06, AP07, AP07.Date, AP08, AP08.Date, AP09, AP09.Date, AP011, AP012, AP012.Date) %>%
-#if a "1" in 5b (was an attempt AND SSS DID NOT help) put a zero in columns for 7,8,9,&11
+# if a "1" in 5b (was an attempt AND SSS DID NOT help) put a zero in columns for 7,8,9,&11
                 mutate(AP07 = case_when(AP05b == 1 ~ 0, TRUE~AP07),
                             AP07.Date = case_when(AP05b == 1 ~ NA, TRUE~AP07.Date),
                             AP08 = case_when(AP05b == 1 ~ 0, TRUE~AP08),
@@ -404,88 +404,23 @@ AP_full= left_join(AP_simp, AP1_form_df, by='CaseId') %>%
                             AP09 = case_when(AP05b == 1 ~ 0, TRUE~AP09),
                             AP09.Date = case_when(AP05b == 1 ~ NA, TRUE~AP09.Date),
                             AP011 = case_when(AP05b == 1 ~ 0, TRUE~AP011)) %>%
-#Create a variables AP_max which selects the highest value from each individual AP flag column keeping only the highest value per record (record in this situation is CaseId)
-    #Exclude column 5b, as we don't want a "1" to count toward the max AP value
-  #reminder that 5b flags indicate an attempt with no impact from SSS
+# Create a variables AP_max which selects the highest value from each individual AP flag column keeping only the highest value per record (record in this situation is CaseId)
+    # Exclude column 5b, as we don't want a "1" to count toward the max AP value
+  # reminder that 5b flags indicate an attempt with no impact from SSS
                mutate(AP_max = pmax(AP01, AP02, AP03, AP04, AP05a,AP06, AP07, AP08, AP09, AP011, AP012, na.rm = TRUE)) %>%
-  #Create a variable called AP_date which takes the earliest date in which an AP value was assigned to each CaseId (the date in which they became an AP at any value)
+  # Create a variable called AP_date which takes the earliest date in which an AP value was assigned to each CaseId (the date in which they became an AP at any value)
                 mutate(AP_date=case_when(AP_max > 0 ~ pmin(AP01.Date, AP02.Date, AP03.Date, AP04.Date, AP05a.Date, AP07.Date, AP08.Date, AP09.Date, AP012.Date, na.rm=T))) %>%
-#If a CaseId indicates a death by suicide ("1" in AP06), then the AP_max value is overwritten to a "0", indicating no prevented attempt regardless of other AP flags, and this individual will be analyzed as part of the NDI search. 
+# If a CaseId indicates a death by suicide ("1" in AP06), then the AP_max value is overwritten to a "0", indicating no prevented attempt regardless of other AP flags, and this individual will be analyzed as part of the NDI search. 
                 mutate(AP_max = case_when(AP06 == 1 ~ 0, TRUE~AP_max))
 
 
-#Track global dates and totals up to that point
-#note this is impacted by completion rate of forms
+# Track global dates and totals up to that point
+# note this is impacted by completion rate of forms
 colSums(Filter(is.numeric, AP_full), na.rm=T) #Jan 1st 2024 value was 8.15
-
-
-#Sections below here are still under development. 
-#Potential avenues for visualization/interpretation
-
-#By date (Note: Dates aren't particularly helpful)
-AP_full$month <- format(as.Date(AP_full$AP_date, format="%Y/%m/%d"),"%m")
-AP_full %>% group_by(month) %>% summarise(total = sum(AP_max[!is.na(AP_max)]))
-
-#By date of when they became a client?: 
-
-
 
 # Analysis by Account
 ### IMPORTANT: The APcas_acc can have some accounts with multiple caseids (especially as this file gets larger). It is unique at the caseid level but may have duplicate accountids. To get the number of unique people you need to do the following code to select only one case per accountid:
 APcas_acc_people=APcas_acc%>%
   group_by(AccountId)%>%
   filter(CaseCreatedDate==min(CaseCreatedDate)) #I am selecting the earliest case for each account, but in the future we may want to change the logic to capture first the longest open case and then the case that was last closed. You can apply this additional logic by ordering it so that the record you want is at the top within each group and then filtering by row_number()==1.
-
-
-#Non-Response Issues/Weighting
-#calculate non-response rate for the columns we use in the code
-#which ones are effected by non-response
-#what SOPs are playing a role
-#what is the magnitude of the issue
-
-#Read in case history
-#We will likely not use this in the future
-#The history field does not contain all of the useful information for this calculation. When we try to calculate PA using this object, we grep for terms that can be used in both positive and negative ways, which leads to assignment of PA values that are invalid. This issue is eliminated by using the CaseNote object, which is what we have opted for below. This code is saved here, but can be disregarded at this time. 
-
-#Case history
-#gv_APsource3="CaseHistory"
-#gv_APfields3="CaseId, Field, NewValue, CreatedDate" 
-
-#Only bring in the case History where the caseid matches our apcas_acc file as well
-#APcaseh_query=sprintf(paste("SELECT ",gv_APfields3," FROM ",gv_APsource3," WHERE Field='Most_Recent_Overall_Risk_Level__c' and CreatedDate>=",gv_startdate," and CreatedDate<",gv_enddate," and CaseId IN (",paste("'",unique(APcas_acc$CaseId),"'",sep="",collapse=","),")"))
-#APcaseh=sf_query(APcaseh_query)
-
-#PA09.: Revised - CaseHistory 
-
-#CaseHistory: Anytime the risk level is HRC; Look through all notes for CaseId and anytime there is an HRC given that CaseID a flag of 1
-#then keep the max..
-#APcaseh=APcaseh%>%
-  #rename(CasehCreatedDate=CreatedDate)
-
-#AP_caseh_df=merge(APcas_acc,APcaseh,by="CaseId",all.x=TRUE) #keep all the original cases even if they do not have form data
-#length(unique(AP_caseh_df$CaseId))
-
-#We currently do not know the likelihood of suicide for those assessed at these risk levels using our SSS assessment criteria. As a proxy estimate, we will assume the same likelihood of a suicide attempt in the next 30 days for those who screen at high risk on the C-SSRS. Thus, we will assign a partial PA value of 0.08 for the first month, and will increase the indicator by 0.08 for every subsequent month the client remains at high suicide risk.
-
-#PA==min(max(PA,sumdaysdiffinrisklevelchange*0.08),1) (for each client/account ID) and PADate==lag(CreatedDate)(on the latest/most recent row where NewValue==""HRC"" for the client) and PA09==1"
-
-#AP9_form_df = AP_caseh_df %>% 
-##  group_by(CaseId) %>%
-# mutate(AP09 = max(case_when((NewValue=="HRC") & 
-#   unclass(date(Last_Connection_DateTime__c)-date(CasehCreatedDate))/30>=12 ~ .16, 
-#   (NewValue=="HRC") & 
-#   unclass(date(Last_Connection_DateTime__c)-date(CasehCreatedDate))/30<12 ~ #(0.08/12*(unclass(date(Last_Connection_DateTime__c)-date(CasehCreatedDate))/30)+.08), 
-#   (NewValue=="MRC") & 
-#  unclass(date(Last_Connection_DateTime__c)-date(CasehCreatedDate))/30>=12 ~ .04, 
-#   (NewValue=="MRC") & 
-#   unclass(date(Last_Connection_DateTime__c)-date(CasehCreatedDate))/30<12 ~ #(0.03/12*(unclass(date(Last_Connection_DateTime__c)-date(CasehCreatedDate))/30)+.01)))) %>%
-#  filter(AP09>0) %>%
-#    group_by(CaseId) %>%
-#    filter(AP09==max(AP09)) %>%
-#    filter(CasehCreatedDate == min(CasehCreatedDate)) %>%
- #   rename(AP09.Date=Last_Connection_DateTime__c) %>%
- #   select(CaseId, AP09.Date, AP09) 
-
-#unique(AP9_form_df$CaseId)
-
 
